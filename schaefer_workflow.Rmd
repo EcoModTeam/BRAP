@@ -8,6 +8,9 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(terra) #r package for raster data
+library(tidyterra) #for dealing with rasters as dataframes (used when plotting)
+library(ggplot2) #for plotting 
+library(gganimate) #for animated plots
 ```
 
 # Introduction to the Schaefer Surplus Production Model
@@ -109,13 +112,16 @@ biomass_raster <- rast(nrows = 10, ncols = 10)
 #fill with random values between 0 and 1000
 values(biomass_raster) <- runif(ncell(biomass_raster), min = 0, max = 1000)
 
+#name layer
+names(biomass_raster) <- "Bt_init" 
+
 #plot it
 plot(biomass_raster,
      main = "Initial Biomass Raster")
 ```
 
 
-Then I will run the function across the raster 
+Then I will run the function across the raster, using the raster values as the initial biomass and $K$.
 
 ```{r}
 #function to apply to each raster cell
@@ -125,32 +131,66 @@ biomass_raster_fun <- function(Bt, r, K, Ct){
 }
 
 #setting up time step iteration
-time_steps <- 1:120
+time_steps <- 120
 
 #setting up C
 C <- numeric() 
 
-#now I am saying every 12 timesteps C is 0.5 and at all other timesteps it is 1
+#now I am saying every 12 timesteps C is 0.5 and at all other timesteps it is 0
 for (i in 1:time_steps){C[i] = ifelse (i %% 12 == 0, 0.5, 0)}
 
 #creating raster stack to hold results
 output_stack <- rast()
 
-for (t in time_steps) {
-  #
-  biomass_raster <- app(biomass_raster, fun = function(v) 
-    #note that C is multiplied by biomass now, so c represents prop of biomass removed
+#adding biomass raster to the stack
+output_stack <- c(output_stack, biomass_raster)
+
+#loop through timestep and apply function
+for (t in 1:time_steps) {
+  #applying function to raster layer t, where v is the value in each raster cell
+  bt_raster <- app(output_stack[[t]], fun = function(v) 
+    #note that C is multiplied by biomass now, so c represents proportion of biomass removed
     biomass_raster_fun(Bt = v, r = 0.75, K = v, Ct = v *C[t]))
-  names(biomass_raster) <- paste0("Bt_", t)
-  output_stack <- c(output_stack, biomass_raster)  # stack each time step
+  #naming the output raster
+  names(bt_raster) <- paste0("Bt_", t)
+  #adding output raster to the raster stack
+  output_stack <- c(output_stack, bt_raster)  
 }
 
 plot(output_stack[[1:20]])
+```
+
+Next I will make an animated plot so we can see the changes
+
+```{r}
+# Convert to a data frame with coordinates
+df <- as.data.frame(output_stack, xy = TRUE)
+
+# Reshape from wide to long format
+df_long <- df %>%
+  pivot_longer(cols = starts_with("Bt_"), 
+               names_to = "Layer", 
+               values_to = "Value")
+
+
+p <- ggplot(df_long, aes(x = x, y = y, fill = Value)) +
+  geom_raster() +
+  #scale_fill_viridis_c() +
+  coord_equal() +
+  labs(title = 'Layer: {closest_state}') +
+  theme_minimal() +
+  transition_states(Layer, transition_length = 2, state_length = 1)
+
+# Save animation
+animate(p, fps = 2, width = 800, height = 600)
+#anim_save("raster_stack_animation.gif")
+
 
 ```
 
-
-
-
+To Do
+- work on animation
+- Demo using a raster layer for C
+- make some notes about data sources for inputs for Binit/K, r, and C
 
 
