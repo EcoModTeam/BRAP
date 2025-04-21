@@ -13,10 +13,6 @@ library(ggplot2) #for plotting
 library(gganimate) #for animated plots
 ```
 
-To Do
-- Demo using a raster layer for C
-- Demo using random input for R in raster
-
 # Introduction to the Schaefer Surplus Production Model
 
 The Schaefer model is a simple surplus production model, used to determine how much fish is left after fishing mortality has occurred. The Schaefer Surplus Production Model has also been used to estimate the impacts of disturbance on benthic communities (e.g. Hiddink et al., 2017).
@@ -36,6 +32,40 @@ $$B_{t+1} = B_t + r B_t \left(1 - \frac{B_t}{K} \right) - C_t$$
 
 - $B_0$ is the initial biomass, which can also be used to represent $K$ if the system is in a baseline state.
 
+# Data Sources
+
+**Sources for Initial Biomass & $K$** 
+
+Initial Biomass and $K$ can be derived from previous surveys of San Francisco Bay benthic communities. In particular, the [San Francisco Bay Benthic Macroinvertebrate Atlas](https://www.usgs.gov/centers/werc/science/san-francisco-bay-benthic-macroinvertebrate-atlas) may be helpful.
+
+**Sources for $r$** 
+
+$r$ may be derived from the Eden Landing study, De La Cruz et al., 2020, and other literature sources.
+
+**sources for $c$** 
+
+$C$ will be dependent on burial depth. The relationship between burial depth and C will be determined from the Eden Landing study and De La Cruz et al., 2020 as well as other literature sources.
+
+# How We Will Represent Elements From The Conceptual Model
+
+As a reminder, below is the conceptual model developed using stakeholder input.
+
+![](conceptual_model_overview.jpg)
+
+Since we are focusing only on the benthic community, here is the portion of the conceptual model that applies to the subtidal zone.
+
+![](conceptual_model_benthos.jpg)
+
+Sediment deposition factors, burial, and distance from placement will all influence $Ct$, the amount of biomass removed from the system. $Ct$ could be binary (either all benthic critters live or all die after placement), or linear, ($Ct$ increases proportionate to burial depth), or represented by a number of other equations. $Ct$ could vary based on distance to placement to create a spatial gradient.
+
+Tides, waves, and water quality will be represented by stochasticity in $Ct$, representing random smaller mortality events, or stochasticity in $r$, the growth rate. 
+
+Seasonality will be represented by non-random fluctuations in $Ct$ and $r$, to represent seasonal mortality events and seasonal fluctuations in growth/recruitment.
+
+Successional stages can be represented time-since-disturbance dependent $r$ values. For example, $r$ may be higher shortly after the disturbance to capture colonization by rapidly reproducing opportunists, but then $r$ may decline to represent the transition to long-lived and slow growing colonizers.
+
+The model could be run on an aggregate level, where biomass is representative of the entire benthic community, or multiple iterations of the model can be run simultaneously to represent the recovery of functional groups or certain species.
+
 # Running the Model at a Single Point
 
 The following R function can be used to calculate biomass at time $t$ using the Schaefer Surplus Production Model:
@@ -47,7 +77,7 @@ SSPM <- function(Bt, r, K, Ct){
 }
 ```
 
-Now, we can run the model and see how biomass changes over time
+Now, we can run the model and see how biomass changes over time.
 
 ```{r, warning = F, message = F}
 Binit <- 1000 #initial biomass
@@ -102,7 +132,7 @@ plot(y = biomass, x = 1:timestep, type = "line",
      main = "Biomass over time with periodic mortality events and varying r", ylab = "Biomass", xlab = "Timestep")
 ```
 
-# Running the Model Accross a Raster
+# Running the Model Across a Raster
 
 First we will create a raster containing initial biomass data to use as input data.
 
@@ -110,7 +140,9 @@ First we will create a raster containing initial biomass data to use as input da
 #this will generate initial biomass data (I will also use this for K)
 
 #create empty biomass raster
-biomass_raster <- rast(nrows = 10, ncols = 10)
+biomass_raster <- rast(nrows = 10, ncols = 10, 
+                       xmin = 0, xmax = 10, 
+                       ymin = 0, ymax = 10)
 
 #fill with random values between 0 and 1000
 values(biomass_raster) <- runif(ncell(biomass_raster), min = 0, max = 1000)
@@ -123,14 +155,13 @@ plot(biomass_raster,
      main = "Initial Biomass Raster")
 ```
 
-
 Then I will run the function across the raster, using the raster values as the initial biomass and $K$.
 
 ```{r, warning = F, message = F}
-#setting up time step iteration
+#setting number of time steps
 time_steps <- 120
 
-#setting up C
+#setting up C as an empty numeric list
 C <- numeric() 
 
 #now I am saying every 12 timesteps C is 0.5 and at all other timesteps it is 0
@@ -148,7 +179,7 @@ K <- biomass_raster
 #loop through timestep and apply function
 for (t in 1:time_steps) {
   
-  #applying function to raster layer t, where v is the value in each raster cell
+  #applying function to raster layer t, where x is the value in each raster cell
   bt_raster <- app(c(output_stack[[t]], K), fun = function(x)
     
     SSPM(Bt = x[1], #x[2] because Bt is the 1st raster in c(output_stack[[t]], K)
@@ -209,7 +240,7 @@ df_long <- df %>%
 #make a ggplot
 p <- ggplot(df_long, aes(x = x, y = y, fill = Value)) +
   geom_raster() +
-  geom_text(aes(x = 150, y = 100,
+  geom_text(aes(x = 0, y = 11,
                 label = paste("Layer: ", Layer)),
                 data = df_long,
             inherit.aes = FALSE) +
@@ -233,16 +264,133 @@ animated_plot <- p +
 ```
 ![](biomass_over_time_1.gif)
 
-# Data Sources
+To demonstrate how to run the Schaefer model when input variables are spatially explicit or stochastic, I will run the model with a spatially explicity $Ct$ and a stochastic $r$.
 
-**Sources for Initial Biomass & K** 
-Initial Biomass and K can be derived from previous surveys of San Francisco Bay benthic communities. In particular, the [San Francisco Bay Benthic Macroinvertebrate Atlas](https://www.usgs.gov/centers/werc/science/san-francisco-bay-benthic-macroinvertebrate-atlas) may be helpful.
+First, I will create a raster with C values.
 
-**Sources for r** 
-r may be derived from the Eden Landing study, De La Cruz et al., 2020, and other literature sources.
+```{r}
+#creating spatially explicit C raster
 
-**sources for c** 
-C will be dependent on burial depth. The relationship between burial depth and C will be determined from the Eden Landing study and De La Cruz et al., 2020 as well as other literature sources.
+#creating a blank raster
+c_rast <- rast(nrows = 10, ncols = 10, xmin = 0, xmax = 10, ymin = 0, ymax = 10)
+
+#saving coordinates of the center
+center_x <- 5
+center_y <- 5
+
+#creating a matrix with higher values in the center using a 2D Gaussian equation
+gaussian_matrix <- outer(1:10, 1:10, function(i, j) {
+  x <- i - center_x
+  y <- j - center_y
+  val <- exp(- (x^2 + y^2) / (2 * 2^2))  #gaussian with sigma=2
+  return(val)
+})
+
+#normalize the matrix to range from 0 to 0.9
+gaussian_matrix <- 0.9 * (gaussian_matrix / max(gaussian_matrix))
+
+#assign values to raster
+values(c_rast) <- as.vector(gaussian_matrix)
+
+#plot the raster
+plot(c_rast, main = "Raster of C Values")
+```
+
+Next, I will reset the output stack and run the model. We will use the same `time_step`, `K` raster, and `biomass_raster` as inputs for timestep, K, and initial biomass, respectively. 
+
+```{r}
+#creating raster stack to hold results
+output_stack <- rast()
+
+#adding biomass raster to the stack
+output_stack <- c(biomass_raster)
+
+#loop through timestep and apply function
+for (t in 1:time_steps) {
+  
+  #applying function to raster layer t, where x is the value in each raster cell
+  bt_raster <- app(c(output_stack[[t]], K, c_rast), fun = function(x)
+    
+    SSPM(Bt = x[1], #x[2] because Bt is the 1st raster in c(output_stack[[t]], K)
+         r = runif(1, 0, 0.5), #r is random number between 0 and 0.5
+         K = x[2], #x[2] because K is the 2nd raster in c(output_stack[[t]], K)
+         Ct = if (t %% 12 == 0) {x[1] * x[3]} else {0}) #every 12 steps, c is applied. In all other steps C is 0
+  )
+  
+  #naming the output raster
+  names(bt_raster) <- paste0("Bt_", t)
+  #adding output raster to the raster stack
+  output_stack <- c(output_stack, bt_raster)
+}
+
+#testing out by plotting first 20 layers
+plot(output_stack[[1:20]], 
+     range = c(0, 1000) #this ensures color scale is fixed
+)
+
+```
+
+Now I will check to make sure that the stochasticity in $r$ is effective.
+
+```{r, warning = F, message = F}
+#extracting biomass for all timesteps from a single raster cell
+cell_value <- extract(output_stack, data.frame(x = c(1), y = c(1)), ID = F)
+
+#Pivoting data to long format and changing Time to be numeric
+cell_val_long <- cell_value %>%
+  pivot_longer(cols = starts_with("Bt_"), names_to = "Time", values_to = "Biomass") %>% 
+  mutate(Time = as.numeric(gsub("Bt_", "", Time)))
+
+#plotting it
+plot(x = cell_val_long$Time, y = cell_val_long$Biomass, 
+     type = "line",
+     main = "Biomass over time in a single raster cell",
+     ylab = "Biomass", xlab = "Timestep")
+```
+And finally, I will make an animation.
+
+```{r, warnings = F, messages = F, results='hide'}
+#convert raster stack to a dataframe
+df <- as.data.frame(output_stack, xy = TRUE)
+
+#convert to long format
+df_long <- df %>%
+  pivot_longer(cols = starts_with("Bt_"),
+               names_to = "Layer",
+               values_to = "Value") %>%
+  #convert layer column (which represents timesteps) to ordered factor
+  mutate(
+    Layer = factor(
+      Layer,
+      levels = unique(Layer[order(as.numeric(gsub("Bt_", "", Layer)))]))
+  )
+
+#make a ggplot
+p <- ggplot(df_long, aes(x = x, y = y, fill = Value)) +
+  geom_raster() +
+  geom_text(aes(x = 0, y = 11,
+                label = paste("Layer: ", Layer)),
+                data = df_long,
+            inherit.aes = FALSE) +
+  scale_fill_viridis_c(option = "D") +
+  theme_minimal()
+
+#animate the plot
+animated_plot <- p +
+  transition_manual(Layer) +
+  labs(title = "Animation of benthic recovery over time")
+
+#these lines are commented out because they do not render in html
+#instead, save the animation and render as an image in rmd text snippit
+
+#render the animation
+#animate(animated_plot, fps = 2, width = 800, height = 600)
+
+#save the animation
+#anim_save("biomass_over_time_2.gif")
+```
+
+![](biomass_over_time_2.gif)
 
 # References
 
