@@ -8,14 +8,18 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(terra) #r package for raster data
-library(tidyterra) #for dealing with rasters as dataframes (used when plotting)
+library(tidyterra) #r package for wrangling raster data
 library(ggplot2) #for plotting 
 library(gganimate) #for animated plots
 ```
 
+To Do
+- Demo using a raster layer for C
+- Demo using random input for R in raster
+
 # Introduction to the Schaefer Surplus Production Model
 
-The Schaefer model is a simple surplus production model, used to determine how much fish is left after fishing mortality has occurred. 
+The Schaefer model is a simple surplus production model, used to determine how much fish is left after fishing mortality has occurred. The Schaefer Surplus Production Model has also been used to estimate the impacts of disturbance on benthic communities (e.g. Hiddink et al., 2017).
 
 The Schaefer model equation for a discrete timestep is as follows:
 
@@ -32,30 +36,20 @@ $$B_{t+1} = B_t + r B_t \left(1 - \frac{B_t}{K} \right) - C_t$$
 
 - $B_0$ is the initial biomass, which can also be used to represent $K$ if the system is in a baseline state.
 
-The Schaefer Surplus Production Model has also been used to determine the impacts of disturbance on benthic communities (e.g. Hiddink et al., 2017).
-
 # Running the Model at a Single Point
 
 The following R function can be used to calculate biomass at time $t$ using the Schaefer Surplus Production Model:
 
-```{r}
-SSPM <- function(Binit, r, K, C, timestep) {
-  #creating an empty list to hold biomass values at each timestep
-  biomass <- numeric(length = timestep)
-  #setting the first biomass value to be initial biomass
-  biomass[1] <- Binit
-  #creating a loop to run sspm
-  for (t in 2:timestep){
-    biomass[t] <- biomass[t-1] + r * biomass[t-1] * (1 - (biomass[t-1]/K)) - C[t-1]
-  }
-  #returning list of biomass values
-  return(biomass)
+```{r, warning = F, message = F}
+#schaefer surplus production model equation
+SSPM <- function(Bt, r, K, Ct){
+  Bt + r * Bt * (1 - (Bt / K)) - Ct
 }
 ```
 
 Now, we can run the model and see how biomass changes over time
 
-```{r}
+```{r, warning = F, message = F}
 Binit <- 1000 #initial biomass
 r <- 0.75 #intrinsic growth rate
 K <- 1000 #carrying capacity same as initial biomass
@@ -65,47 +59,54 @@ C <- numeric() #C is a numeric list
 #now I am saying every 12 timesteps C is 450 and at all other timesteps it is 0
 for (i in 1:timestep){C[i] = ifelse (i %% 12 == 0, 450, 0)}
 
-#now run the model
-biomass <- SSPM(Binit = Binit, r = r, K = K, C = C, timestep = timestep)
+#creating an empty list to hold biomass values at each timestep
+biomass <- numeric(length = timestep)
+  
+#setting the first biomass value to be initial biomass
+biomass[1] <- Binit
+
+#creating a loop to run sspm
+  for (t in 2:timestep){
+    biomass[t] <- SSPM(
+      Bt = biomass[t-1], #biomass at previous step
+      r = r,
+      K = K,
+      Ct = C[t-1] #catch at previous step
+    )
+  }
 
 #now plot biomass
 plot(y = biomass, x = 1:timestep, type = "line", 
-     main = "Biomass over time with periodic mortality events")
+     main = "Biomass over time with periodic mortality events",
+     ylab = "Biomass", xlab = "Timestep")
 ```
 
 We can also introduce stochasticity into the model by varying $r$. This could represent freshwater inflows, storm events, or other variations in environmental conditions that influence recovery time.
 
-```{r}
-#redoing the function so a list value is accepted for R
-SSPM_variable_r <- function(Binit, r, K, C, timestep) {
-  #creating an empty list to hold biomass values at each timestep
-  biomass <- numeric(length = timestep)
-  #setting the first biomass value to be initial biomass
-  biomass[1] <- Binit
-  #creating a loop to run sspm
-  for (t in 2:timestep){
-    biomass[t] <- biomass[t-1] + r[t-1] * biomass[t-1] * (1 - (biomass[t-1]/K)) - C[t-1]
-  }
-  #returning list of biomass values
-  return(biomass)
-}
-
-#create list of random r values
+```{r, warning = F, message = F}
+#create list of random r values between 0 and 1
 r <- runif(timestep, 0, 1)
 
-#run the model
-biomass <- SSPM_variable_r(Binit = Binit, r = r, K = K, C = C, timestep = timestep)
+#creating a loop to run sspm
+for (t in 2:timestep){
+  biomass[t] <- SSPM(
+    Bt = biomass[t-1], #biomass at previous step
+    r = r[t-1], #rate at previous step
+    K = K,
+    Ct = C[t-1] #catch at previous step
+  )
+}
 
 #plot biomass
 plot(y = biomass, x = 1:timestep, type = "line",
-     main = "Biomass over time with periodic mortality events and varying r")
+     main = "Biomass over time with periodic mortality events and varying r", ylab = "Biomass", xlab = "Timestep")
 ```
 
 # Running the Model Accross a Raster
 
 First we will create a raster containing initial biomass data to use as input data.
 
-```{r}
+```{r, warning = F, message = F}
 #this will generate initial biomass data (I will also use this for K)
 
 #create empty biomass raster
@@ -125,12 +126,7 @@ plot(biomass_raster,
 
 Then I will run the function across the raster, using the raster values as the initial biomass and $K$.
 
-```{r}
-#function to apply to each raster cell
-biomass_raster_fun <- function(Bt, r, K, Ct){
-  Bt + r * Bt * (1 - (Bt / K)) - Ct
-}
-
+```{r, warning = F, message = F}
 #setting up time step iteration
 time_steps <- 120
 
@@ -151,16 +147,16 @@ K <- biomass_raster
 
 #loop through timestep and apply function
 for (t in 1:time_steps) {
-
+  
   #applying function to raster layer t, where v is the value in each raster cell
   bt_raster <- app(c(output_stack[[t]], K), fun = function(x)
     
-    biomass_raster_fun(Bt = x[1], #x[2] because Bt is the 1st raster in c(output_stack[[t]], K)
-                       r = 0.75, #r is constant for now
-                       K = x[2], #x[2] because K is the 2nd raster in c(output_stack[[t]], K)
-                       Ct = x[1] *C[t]) #note that C is multiplied by biomass now, so c represents proportion of biomass removed
+    SSPM(Bt = x[1], #x[2] because Bt is the 1st raster in c(output_stack[[t]], K)
+         r = 0.75, #r is constant for now
+         K = x[2], #x[2] because K is the 2nd raster in c(output_stack[[t]], K)
+         Ct = x[1] *C[t]) #note that C is multiplied by biomass now, so c represents proportion of biomass removed
     
-    )
+  )
   
   #naming the output raster
   names(bt_raster) <- paste0("Bt_", t)
@@ -169,12 +165,14 @@ for (t in 1:time_steps) {
 }
 
 #testing out by plotting first 20 layers
-plot(output_stack[[1:20]], range = c(0, 1000))
+plot(output_stack[[1:20]], 
+     range = c(0, 1000) #this ensures color scale is fixed
+)
 ```
 
 We can also look at what is happening in a single cell.
 
-```{r}
+```{r, warning = F, message = F}
 #extracting biomass for all timesteps from a single raster cell
 cell_value <- extract(output_stack, data.frame(x = c(1), y = c(1)), ID = F)
 
@@ -186,12 +184,13 @@ cell_val_long <- cell_value %>%
 #plotting it
 plot(x = cell_val_long$Time, y = cell_val_long$Biomass, 
      type = "line",
-     main = "Biomass over time in a single raster cell")
+     main = "Biomass over time in a single raster cell",
+     ylab = "Biomass", xlab = "Timestep")
 ```
 
 Next I will make an animated plot so we can see the changes.
 
-```{r, results='hide'}
+```{r, warnings = F, messages = F, results='hide'}
 #convert raster stack to a dataframe
 df <- as.data.frame(output_stack, xy = TRUE)
 
@@ -222,6 +221,9 @@ animated_plot <- p +
   transition_manual(Layer) +
   labs(title = "Animation of benthic recovery over time")
 
+#these lines are commented out because they do not render in html
+#instead, save the animation and render as an image in rmd text snippit
+
 #render the animation
 #animate(animated_plot, fps = 2, width = 800, height = 600)
 
@@ -230,10 +232,6 @@ animated_plot <- p +
 
 ```
 ![](biomass_over_time_1.gif)
-To Do
-- Demo using a raster layer for C
-- Demo using random input for R in raster
-- use a single function in first part
 
 # Data Sources
 
